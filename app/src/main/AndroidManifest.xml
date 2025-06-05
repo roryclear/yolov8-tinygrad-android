@@ -5,7 +5,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" />
-    <application android:label="tinygrad remote android" android:theme="@style/Theme.yolov8tinygradandroid">
+    <application android:label="yolov8 tinygrad android" android:theme="@style/Theme.yolov8tinygradandroid">
         <activity android:name=".MainActivity" android:exported="true" android:largeHeap="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
