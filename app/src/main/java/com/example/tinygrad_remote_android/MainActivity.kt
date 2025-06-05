@@ -1,4 +1,4 @@
-package com.example.tinygrad_remote_android
+package com.example.yolov8_tinygrad_android
 
 import android.Manifest
 import android.content.pm.PackageManager

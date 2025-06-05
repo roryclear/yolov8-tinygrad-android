@@ -1,11 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.tinygrad_remote_android">
+    package="com.example.yolov8_tinygrad_android">
 
     <uses-feature android:name="android.hardware.vulkan.compute" android:required="true" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" />
-    <application android:label="tinygrad remote android" android:theme="@style/Theme.Tinygradremoteandroid">
+    <application android:label="tinygrad remote android" android:theme="@style/Theme.yolov8tinygradandroid">
         <activity android:name=".MainActivity" android:exported="true" android:largeHeap="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

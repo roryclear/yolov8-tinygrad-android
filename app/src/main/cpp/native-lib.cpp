@@ -116,7 +116,7 @@ void initializeVulkanIfNeeded() {
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_example_tinygrad_1remote_1android_MainActivity_createBuffer(
+Java_com_example_yolov8_1tinygrad_1android_MainActivity_createBuffer(
         JNIEnv* env,
         jobject /* this */,
         jstring key,
@@ -167,7 +167,7 @@ Java_com_example_tinygrad_1remote_1android_MainActivity_createBuffer(
 
 extern "C"
 JNIEXPORT jbyteArray JNICALL
-Java_com_example_tinygrad_1remote_1android_MainActivity_getBuffer(
+Java_com_example_yolov8_1tinygrad_1android_MainActivity_getBuffer(
         JNIEnv *env,
         jobject /* this */,
         jstring key) {
@@ -230,7 +230,7 @@ Java_com_example_tinygrad_1remote_1android_MainActivity_getBuffer(
 
 extern "C"
 JNIEXPORT float JNICALL
-Java_com_example_tinygrad_1remote_1android_MainActivity_runVulkanCompute(
+Java_com_example_yolov8_1tinygrad_1android_MainActivity_runVulkanCompute(
         JNIEnv *env,
         jobject /* this */,
         jbyteArray shaderBytes,
@@ -407,7 +407,7 @@ Java_com_example_tinygrad_1remote_1android_MainActivity_runVulkanCompute(
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_example_tinygrad_1remote_1android_MainActivity_uploadBuffer(
+Java_com_example_yolov8_1tinygrad_1android_MainActivity_uploadBuffer(
         JNIEnv *env,
         jobject /* this */,
         jint bufferIndex,

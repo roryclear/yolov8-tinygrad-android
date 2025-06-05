@@ -1,4 +1,4 @@
-package com.example.tinygrad_remote_android.ui.theme
+package com.example.yolov8_tinygrad_android.ui.theme
 
 import android.app.Activity
 import android.os.Build
@@ -34,7 +34,7 @@ private val LightColorScheme = lightColorScheme(
 )
 
 @Composable
-fun TinygradremoteandroidTheme(
+fun yolov8tinygradandroidTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     // Dynamic color is available on Android 12+
     dynamicColor: Boolean = true,

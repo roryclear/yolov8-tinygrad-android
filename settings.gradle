@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "tinygrad-remote-android"
+rootProject.name = "yolov8-tinygrad-android"
 include ':app'

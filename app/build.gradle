@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace 'com.example.tinygrad_remote_android'
+    namespace 'com.example.yolov8_tinygrad_android'
     compileSdk 35
 
     defaultConfig {
-        applicationId "com.example.tinygrad_remote_android"
+        applicationId "com.example.yolov8_tinygrad_android"
         minSdk 24
         targetSdk 35
         versionCode 1

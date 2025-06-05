@@ -1,4 +1,4 @@
-package com.example.tinygrad_remote_android.ui.theme
+package com.example.yolov8_tinygrad_android.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
