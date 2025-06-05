@@ -23,6 +23,10 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import android.graphics.ImageFormat
 import android.media.Image
+import android.graphics.BitmapFactory
+import android.graphics.Rect
+import android.graphics.YuvImage
+import java.io.ByteArrayOutputStream
 
 sealed class ExecOp {
     data class ProgramExecOp(
@@ -85,6 +89,8 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var previewView: PreviewView
     public val h = mutableMapOf<String, ByteArray>()
+    // Add execOps as a member variable to be accessible by ImageAnalyzer
+    private var execOps: List<ExecOp>? = null
 
     // Camera permission launcher
     private val requestPermissionLauncher = registerForActivityResult(
@@ -126,8 +132,23 @@ class MainActivity : ComponentActivity() {
                 val batchData = batchDataStream.readBytes()
                 batchDataStream.close()
 
-                // Process the batch data and run benchmarks
-                processBatchData(this@MainActivity, batchData)
+                // Process the batch data and prepare execOps for both benchmark and camera
+                val parsedHashDataMap = parseHashDataMap(batchData)
+                val operations = extractOperationsFromHashData(parsedHashDataMap)
+                val (initOps, lastCopyIn) = separateOperations(operations)
+                executeInitializationOps(this@MainActivity, initOps, parsedHashDataMap)
+                // Store execOps here so it can be used by YourImageAnalyzer
+                this.execOps = prepareExecutionOps(operations, h, parsedHashDataMap, lastCopyIn)
+
+                // Execute operations in benchmark loop using the prepared execOps
+                // Pass null for rgbData as we are not using camera data in this loop
+                for (i in 1..10) {
+                    val startTime = System.nanoTime()
+                    executeOps(this@MainActivity, execOps!!) // Use '!!' because we know it's initialized here
+                    val endTime = System.nanoTime()
+                    val durationMs = (endTime - startTime) / 1_000_000.0
+                    Log.d("MainActivity", "Run #$i took %.3f ms".format(durationMs))
+                }
 
                 // After benchmarks complete, request camera permission
                 runOnUiThread {
@@ -165,7 +186,8 @@ class MainActivity : ComponentActivity() {
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .build()
                     .also {
-                        it.setAnalyzer(ContextCompat.getMainExecutor(this), YourImageAnalyzer())
+                        // Pass 'this@MainActivity' to YourImageAnalyzer so it can access 'execOps' and 'executeOps'
+                        it.setAnalyzer(ContextCompat.getMainExecutor(this), YourImageAnalyzer(this@MainActivity))
                     }
 
                 val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
@@ -184,31 +206,22 @@ class MainActivity : ComponentActivity() {
             }
         }, ContextCompat.getMainExecutor(this))
     }
-}
 
-fun processBatchData(activity: MainActivity, body: ByteArray) {
-    // 1. Parse binary data into hash map
-    val hashDataMap = parseHashDataMap(body)
-
-    // 2. Extract and clean operations
-    val operations = extractOperationsFromHashData(hashDataMap)
-
-    // 3. Separate and execute initialization operations
-    val (initOps, lastCopyIn) = separateOperations(operations)
-    executeInitializationOps(activity, initOps, hashDataMap)
-
-    // 4. Prepare execution operations
-    val execOps = prepareExecutionOps(operations, activity.h, hashDataMap, lastCopyIn)
-
-    // 5. Execute operations in benchmark loop
-    for (i in 1..100) {
-        val startTime = System.nanoTime()
-        executeOps(activity, execOps)
-        val endTime = System.nanoTime()
-        val durationMs = (endTime - startTime) / 1_000_000.0
-        Log.d("MainActivity", "Run #$i took %.3f ms".format(durationMs))
+    // Helper to get execOps, ensuring it's not null before use
+    fun getExecOperations(): List<ExecOp>? {
+        return execOps
     }
 }
+
+// Renamed and modified processBatchData to only prepare operations, not run the loop
+fun prepareBatchOperations(activity: MainActivity, body: ByteArray): List<ExecOp> {
+    val hashDataMap = parseHashDataMap(body)
+    val operations = extractOperationsFromHashData(hashDataMap)
+    val (initOps, lastCopyIn) = separateOperations(operations)
+    executeInitializationOps(activity, initOps, hashDataMap)
+    return prepareExecutionOps(operations, activity.h, hashDataMap, lastCopyIn)
+}
+
 
 fun parseHashDataMap(body: ByteArray): MutableMap<String, ByteArray> {
     val hashDataMap = mutableMapOf<String, ByteArray>()
@@ -287,13 +300,20 @@ fun prepareExecutionOps(
 ): List<ExecOp> {
     return operations.filter {
         it.trim().startsWith("ProgramExec(") ||
-                it.trim().startsWith("CopyOut(")
+                it.trim().startsWith("CopyOut(") ||
+                (lastCopyIn != null && it.trim() == lastCopyIn.trim()) // Include the last CopyIn for execOps
     }.mapNotNull { op ->
-        parseExecOp(op, programMap)
-    } + listOfNotNull(lastCopyIn?.let { parseCopyInOp(it, hashDataMap) })
+        // Handle CopyIn separately for the last one
+        if (op.trim() == lastCopyIn?.trim()) {
+            parseCopyInOp(op, hashDataMap)
+        } else {
+            parseExecOp(op, programMap)
+        }
+    }
 }
 
-fun executeOps(activity: MainActivity, ops: List<ExecOp>) {
+// Modify executeOps to accept optional rgbData
+fun executeOps(activity: MainActivity, ops: List<ExecOp>, rgbData: ByteArray? = null) {
     ops.forEach { op ->
         when (op) {
             is ExecOp.ProgramExecOp -> {
@@ -322,7 +342,9 @@ fun executeOps(activity: MainActivity, ops: List<ExecOp>) {
             }
             is ExecOp.CopyInOp -> {
                 Log.d("MainActivity", "COPYING INTO BUFFER: ${op.bufferNum}")
-                activity.uploadBuffer(op.bufferNum, op.data)
+                // Use rgbData if provided, otherwise fall back to op.data
+                activity.uploadBuffer(op.bufferNum, rgbData ?: op.data)
+                Log.d("MainActivity", "  op.data length: ${op.data.size} bytes")
             }
         }
     }
@@ -336,6 +358,7 @@ fun separateOperations(operations: List<String>): Pair<List<String>, String?> {
         when {
             op.trim().startsWith("BufferAlloc(") -> true
             op.trim().startsWith("ProgramAlloc(") -> true
+            // Only include CopyIn ops in initOps if they are NOT the lastCopyIn
             op.trim().startsWith("CopyIn(") -> op != lastCopyIn
             else -> false
         }
@@ -371,7 +394,7 @@ fun parseExecOp(op: String, programMap: Map<String, ByteArray>): ExecOp? {
             val params = parseOperationParams(match.groupValues[2])
             ExecOp.CopyOutOp(params["buffer_num"] ?: "0")
         }
-        else -> null
+        else -> null // For cases like CopyIn that are handled separately
     }
 }
 
@@ -386,82 +409,62 @@ fun parseCopyInOp(op: String, hashDataMap: Map<String, ByteArray>): ExecOp.CopyI
     }
 }
 
-fun executeOperations(activity: MainActivity, operations: List<String>, hashDataMap: Map<String, ByteArray>) {
-    try {
-        if (operations.size == 1 && operations[0].trim().startsWith("GetProperties(")) {
-            Log.d("MainActivity", "Got properties request - skipping in offline mode")
-            return
-        }
-
-        for (op in operations) {
-            if (op.isBlank()) continue
-
-            val trimmedOp = op.trim()
-            val match = Regex("""(\w+)\((.*)\)""").find(trimmedOp) ?: continue
-
-            when (match.groupValues[1]) {
-                "ProgramAlloc" -> {
-                    val params = parseOperationParams(match.groupValues[2])
-                    val datahash = params["datahash"] ?: ""
-                    val name = params["name"] ?: ""
-                    activity.h[name] = hashDataMap[datahash] ?: byteArrayOf()
-                }
-                "BufferAlloc" -> {
-                    val params = parseOperationParams(match.groupValues[2])
-                    val bufferNum = params["buffer_num"] ?: "0"
-                    val size = params["size"]?.toIntOrNull() ?: 0
-                    activity.createBuffer(bufferNum, size)
-                }
-                "CopyIn" -> {
-                    val params = parseOperationParams(match.groupValues[2])
-                    val bufferNum = params["buffer_num"]?.toIntOrNull() ?: continue
-                    val datahash = params["datahash"] ?: continue
-                    hashDataMap[datahash]?.let { data ->
-                        activity.uploadBuffer(bufferNum, data)
-                    }
-                }
-            }
-        }
-    } catch (e: Exception) {
-        Log.e("MainActivity", "ERROR IN PROCESSING: ${e.stackTraceToString()}")
-    }
-}
+// This function is no longer needed in its original form as operations are separated
+// fun executeOperations(activity: MainActivity, operations: List<String>, hashDataMap: Map<String, ByteArray>) { ... }
 
 fun parseOperationParams(paramString: String): Map<String, String> {
     val params = mutableMapOf<String, String>()
-    val pattern = """(\w+)=(\(.*?\)|'[^']*'|"[^"]*"|[^,)]+)"""
+    // Updated regex to correctly handle nested parentheses for global_size, etc.
+    val pattern = """(\w+)=((?:\([^)]*\)|'[^']*'|"[^"]*"|[^,)]+)(?:\s*,\s*\([^)]*\))*)"""
     val regex = Regex(pattern)
 
     regex.findAll(paramString).forEach { match ->
         val key = match.groupValues[1]
-        var value = match.groupValues[2]
+        var value = match.groupValues[2].trim() // Trim to remove leading/trailing whitespace
 
+        // Clean up quotes or parentheses only if they fully enclose the value
         value = when {
             value.startsWith("('") && value.endsWith("')") ->
-                value.removeSurrounding("('").removeSurrounding("')")
-            value.startsWith("('") && value.endsWith("')") ->
-                value.removeSurrounding("('").removeSurrounding("')")
+                value.substring(2, value.length - 2) // Remove (' and ')
             value.startsWith("'") && value.endsWith("'") ->
                 value.removeSurrounding("'")
             value.startsWith("\"") && value.endsWith("\"") ->
                 value.removeSurrounding("\"")
+            // Handle cases like "global_size=(1,1,1)" where value is "(1,1,1)"
+            value.startsWith("(") && value.endsWith(")") ->
+                value.removeSurrounding("(", ")")
             else -> value
         }
-
         params[key] = value
     }
-
     return params
 }
 
-private class YourImageAnalyzer : ImageAnalysis.Analyzer {
+
+private class YourImageAnalyzer(private val activity: MainActivity) : ImageAnalysis.Analyzer {
     override fun analyze(image: ImageProxy) {
         // This is called for each frame
-        Log.d("CameraFrame", "New frame captured! ${image.width}x${image.height}")
+        // Log.d("CameraFrame", "New frame captured! ${image.width}x${image.height}") // This can be very chatty
 
-        // You can access the image data like this:
-        val imageData = image.image?.toByteArray()
-        // imageData contains the raw frame data
+        val rgbByteArray = image.image?.toRGBByteArray()
+        val input = rgbByteArray?.let { ByteArray(it.size * 4) }
+        if (rgbByteArray != null && input != null) {
+            for (i in 0 until rgbByteArray.size / 4) {
+                input[i * 3 * 4 + 0] = rgbByteArray[i * 4 + 0]
+                input[i * 3 * 4 + 4] = rgbByteArray[i * 4 + 1]
+                input[i * 3 * 4 + 8] = rgbByteArray[i * 4 + 2]
+            }
+        }
+        // Get the prepared execOps from MainActivity
+        val execOps = activity.getExecOperations()
+
+        if (execOps != null) {
+            val startTime = System.nanoTime()
+            executeOps(activity, execOps, input) // Pass the rgb data here
+            val endTime = System.nanoTime()
+            val durationMs = (endTime - startTime) / 1_000_000.0
+            Log.d("ImageAnalysis", "Frame processing took %.3f ms".format(durationMs))
+        }
 
         // Make sure to close the image when done
         image.close()
@@ -469,10 +472,37 @@ private class YourImageAnalyzer : ImageAnalysis.Analyzer {
 }
 
 // Add this extension function outside the MainActivity class
-private fun Image.toByteArray(): ByteArray {
-    val planes = this.planes
-    val buffer: ByteBuffer = planes[0].buffer
-    val bytes = ByteArray(buffer.remaining())
-    buffer.get(bytes)
-    return bytes
+private fun Image.toRGBByteArray(): ByteArray {
+    val yBuffer = planes[0].buffer
+    val uBuffer = planes[1].buffer
+    val vBuffer = planes[2].buffer
+
+    val ySize = yBuffer.remaining()
+    val uSize = uBuffer.remaining()
+    val vSize = vBuffer.remaining()
+
+    val nv21 = ByteArray(ySize + uSize + vSize)
+
+    yBuffer.get(nv21, 0, ySize)
+    vBuffer.get(nv21, ySize, vSize) // VU order for NV21
+    uBuffer.get(nv21, ySize + vSize, uSize)
+
+    val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
+
+    val out = ByteArrayOutputStream()
+    yuvImage.compressToJpeg(Rect(0, 0, width, height), 100, out)
+    val jpegBytes = out.toByteArray()
+
+    // Decode to RGB Bitmap
+    val bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
+
+    val rgbBuffer = ByteBuffer.allocate(bitmap.byteCount)
+    bitmap.copyPixelsToBuffer(rgbBuffer)
+
+    val signedRgbBytes = rgbBuffer.array()
+    val unsignedRgbBytes = ByteArray(signedRgbBytes.size) { i ->
+        (signedRgbBytes[i].toInt() and 0xFF).toByte()
+    }
+
+    return unsignedRgbBytes
 }
