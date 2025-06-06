@@ -24,9 +24,93 @@ import androidx.camera.core.ImageProxy
 import android.graphics.ImageFormat
 import android.media.Image
 import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.YuvImage
 import java.io.ByteArrayOutputStream
+
+val yoloClasses = listOf(
+    Pair("person", Color.RED),
+    Pair("bicycle", Color.GREEN),
+    Pair("car", Color.BLUE),
+    Pair("motorcycle", Color.CYAN),
+    Pair("airplane", Color.MAGENTA),
+    Pair("bus", Color.YELLOW),
+    Pair("train", Color.parseColor("#FFA500")), // Orange
+    Pair("truck", Color.parseColor("#800080")), // Purple
+    Pair("boat", Color.parseColor("#A52A2A")), // Brown
+    Pair("traffic light", Color.parseColor("#7FB33F")), // RGB(0.5, 0.7, 0.2)
+    Pair("fire hydrant", Color.parseColor("#CC1A1A")), // RGB(0.8, 0.1, 0.1)
+    Pair("stop sign", Color.parseColor("#4D4DCC")), // RGB(0.3, 0.3, 0.8)
+    Pair("parking meter", Color.parseColor("#B38C4D")), // RGB(0.7, 0.5, 0.3)
+    Pair("bench", Color.parseColor("#666633")), // RGB(0.4, 0.4, 0.2)
+    Pair("bird", Color.parseColor("#1A80E6")), // RGB(0.1, 0.5, 0.9)
+    Pair("cat", Color.parseColor("#CC33CC")), // RGB(0.8, 0.2, 0.6)
+    Pair("dog", Color.parseColor("#E64D4D")), // RGB(0.9, 0.3, 0.3)
+    Pair("horse", Color.parseColor("#3399CC")), // RGB(0.2, 0.6, 0.7)
+    Pair("sheep", Color.parseColor("#B34D80")), // RGB(0.7, 0.3, 0.5)
+    Pair("cow", Color.parseColor("#66CC66")), // RGB(0.4, 0.8, 0.4)
+    Pair("elephant", Color.parseColor("#4D66E6")), // RGB(0.3, 0.4, 0.9)
+    Pair("bear", Color.parseColor("#9933CC")), // RGB(0.6, 0.2, 0.8)
+    Pair("zebra", Color.parseColor("#CC8033")), // RGB(0.8, 0.5, 0.2)
+    Pair("giraffe", Color.parseColor("#80E61A")), // RGB(0.5, 0.9, 0.1)
+    Pair("backpack", Color.parseColor("#4DB366")), // RGB(0.3, 0.7, 0.4)
+    Pair("umbrella", Color.parseColor("#6699E6")), // RGB(0.4, 0.6, 0.9)
+    Pair("handbag", Color.parseColor("#E63380")), // RGB(0.9, 0.2, 0.5)
+    Pair("tie", Color.parseColor("#804DB3")), // RGB(0.5, 0.3, 0.7)
+    Pair("suitcase", Color.parseColor("#99B333")), // RGB(0.6, 0.7, 0.2)
+    Pair("frisbee", Color.parseColor("#B33366")), // RGB(0.7, 0.2, 0.4)
+    Pair("skis", Color.parseColor("#4DE64D")), // RGB(0.3, 0.9, 0.3)
+    Pair("snowboard", Color.parseColor("#CC1A99")), // RGB(0.8, 0.1, 0.6)
+    Pair("sports ball", Color.parseColor("#664DCC")), // RGB(0.4, 0.3, 0.8)
+    Pair("kite", Color.parseColor("#3380CC")), // RGB(0.2, 0.5, 0.7)
+    Pair("baseball bat", Color.parseColor("#996633")), // RGB(0.6, 0.4, 0.2)
+    Pair("baseball glove", Color.parseColor("#B31A66")), // RGB(0.7, 0.1, 0.4)
+    Pair("skateboard", Color.parseColor("#80CC80")), // RGB(0.5, 0.8, 0.5)
+    Pair("surfboard", Color.parseColor("#CC4D99")), // RGB(0.8, 0.3, 0.6)
+    Pair("tennis racket", Color.parseColor("#33B3E6")), // RGB(0.2, 0.7, 0.9)
+    Pair("bottle", Color.parseColor("#E6334D")), // RGB(0.9, 0.2, 0.3)
+    Pair("wine glass", Color.parseColor("#99994D")), // RGB(0.6, 0.6, 0.3)
+    Pair("cup", Color.parseColor("#4D66E6")), // RGB(0.3, 0.4, 0.9)
+    Pair("fork", Color.parseColor("#66B333")), // RGB(0.4, 0.7, 0.2)
+    Pair("knife", Color.parseColor("#CC3380")), // RGB(0.8, 0.2, 0.5)
+    Pair("spoon", Color.parseColor("#994DB3")), // RGB(0.6, 0.3, 0.7)
+    Pair("bowl", Color.parseColor("#33CC66")), // RGB(0.2, 0.8, 0.4)
+    Pair("banana", Color.parseColor("#B3B31A")), // RGB(0.7, 0.7, 0.1)
+    Pair("apple", Color.parseColor("#E61A66")), // RGB(0.9, 0.1, 0.4)
+    Pair("sandwich", Color.parseColor("#6680CC")), // RGB(0.4, 0.5, 0.8)
+    Pair("orange", Color.parseColor("#CC9933")), // RGB(0.8, 0.6, 0.2)
+    Pair("broccoli", Color.parseColor("#4DCC4D")), // RGB(0.3, 0.8, 0.3)
+    Pair("carrot", Color.parseColor("#B33399")), // RGB(0.7, 0.2, 0.6)
+    Pair("hot dog", Color.parseColor("#E64D80")), // RGB(0.9, 0.3, 0.5)
+    Pair("pizza", Color.parseColor("#804DCC")), // RGB(0.5, 0.3, 0.8)
+    Pair("donut", Color.parseColor("#CC1A66")), // RGB(0.8, 0.1, 0.4)
+    Pair("cake", Color.parseColor("#B3801A")), // RGB(0.7, 0.5, 0.1)
+    Pair("chair", Color.parseColor("#993366")), // RGB(0.6, 0.2, 0.4)
+    Pair("couch", Color.parseColor("#669933")), // RGB(0.4, 0.6, 0.2)
+    Pair("potted plant", Color.parseColor("#CC6699")), // RGB(0.8, 0.4, 0.5)
+    Pair("bed", Color.parseColor("#4DB3B3")), // RGB(0.3, 0.7, 0.7)
+    Pair("dining table", Color.parseColor("#80CC4D")), // RGB(0.5, 0.8, 0.3)
+    Pair("toilet", Color.parseColor("#B36699")), // RGB(0.7, 0.4, 0.6)
+    Pair("tv", Color.parseColor("#E68033")), // RGB(0.9, 0.5, 0.2)
+    Pair("laptop", Color.parseColor("#994DB3")), // RGB(0.6, 0.3, 0.7)
+    Pair("mouse", Color.parseColor("#33E680")), // RGB(0.2, 0.9, 0.5)
+    Pair("remote", Color.parseColor("#CC664D")), // RGB(0.8, 0.4, 0.3)
+    Pair("keyboard", Color.parseColor("#4D99CC")), // RGB(0.3, 0.6, 0.8)
+    Pair("cell phone", Color.parseColor("#B34DE6")), // RGB(0.7, 0.3, 0.9)
+    Pair("microwave", Color.parseColor("#66E666")), // RGB(0.4, 0.9, 0.4)
+    Pair("oven", Color.parseColor("#80B333")), // RGB(0.5, 0.7, 0.2)
+    Pair("toaster", Color.parseColor("#E6334D")), // RGB(0.9, 0.2, 0.3)
+    Pair("sink", Color.parseColor("#99CC4D")), // RGB(0.6, 0.8, 0.3)
+    Pair("refrigerator", Color.parseColor("#CC66B3")), // RGB(0.8, 0.4, 0.7)
+    Pair("book", Color.parseColor("#4D80E6")), // RGB(0.3, 0.5, 0.9)
+    Pair("clock", Color.parseColor("#B3B31A")), // RGB(0.7, 0.7, 0.2)
+    Pair("vase", Color.parseColor("#E66680")), // RGB(0.9, 0.4, 0.5)
+    Pair("scissors", Color.parseColor("#33B3CC")), // RGB(0.2, 0.7, 0.8)
+    Pair("teddy bear", Color.parseColor("#994DE6")), // RGB(0.6, 0.3, 0.9)
+    Pair("hair drier", Color.parseColor("#CC334D")), // RGB(0.8, 0.2, 0.3)
+    Pair("toothbrush", Color.parseColor("#66B399")) // RGB(0.4, 0.7, 0.6)
+)
 
 sealed class ExecOp {
     data class ProgramExecOp(
@@ -142,7 +226,7 @@ class MainActivity : ComponentActivity() {
 
                 // Execute operations in benchmark loop using the prepared execOps
                 // Pass null for rgbData as we are not using camera data in this loop
-                for (i in 1..10) {
+                for (i in 1..1000) {
                     val startTime = System.nanoTime()
                     executeOps(this@MainActivity, execOps!!) // Use '!!' because we know it's initialized here
                     val endTime = System.nanoTime()
@@ -333,12 +417,25 @@ fun executeOps(activity: MainActivity, ops: List<ExecOp>, rgbData: ByteArray? = 
                         .get(this)
                 }
                 Log.d("MainActivity", "COPYING OUT BUFFER: ${op.bufferNum}")
-                Log.d("MainActivity", "buffer is [")
+                val countMap = mutableMapOf<String, Int>()
+
                 for (i in 0 until floatArray.size / 6) {
                     val row = floatArray.sliceArray(i * 6 until (i + 1) * 6)
-                    Log.d("MainActivity", "  [${row.joinToString(", ") { "%.4f".format(it) }}]")
+
+                    val classIndex = row[5].toInt()
+                    val className = yoloClasses.getOrNull(classIndex)?.first ?: "Unknown"
+
+                    if (row[4] >= 0.25f) {
+                        countMap[className] = countMap.getOrDefault(className, 0) + 1
+                    }
+
+                    //Log.d("MainActivity", "[${row.take(5).joinToString(", ") { "%.4f".format(it) }}, $className]")
                 }
-                Log.d("MainActivity", "]")
+
+                Log.d("MainActivity", "Class counts:")
+                for ((name, count) in countMap) {
+                    Log.d("MainActivity", "$name: $count")
+                }
             }
             is ExecOp.CopyInOp -> {
                 Log.d("MainActivity", "COPYING INTO BUFFER: ${op.bufferNum}")
@@ -446,6 +543,7 @@ private class YourImageAnalyzer(private val activity: MainActivity) : ImageAnaly
         // This is called for each frame
         // Log.d("CameraFrame", "New frame captured! ${image.width}x${image.height}") // This can be very chatty
 
+        //hack because vulkan doesn't have int8? they're converted to int32s
         val rgbByteArray = image.image?.toRGBByteArray()
         val input = rgbByteArray?.let { ByteArray(it.size * 4) }
         if (rgbByteArray != null && input != null) {
