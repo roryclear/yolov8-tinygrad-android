@@ -4,6 +4,9 @@
     <uses-feature android:name="android.hardware.vulkan.compute" android:required="true" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
     <uses-feature android:name="android.hardware.camera" />
     <application android:label="yolov8 tinygrad android" android:theme="@style/Theme.yolov8tinygradandroid">
         <activity android:name=".MainActivity" android:exported="true" android:largeHeap="true">

@@ -3,33 +3,34 @@ package com.example.yolov8_tinygrad_android
 import android.Manifest
 import android.content.pm.PackageManager
 import android.content.res.AssetManager
-import android.os.Bundle
+import android.os.*
 import android.util.Log
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.core.AspectRatio
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.Preview
-import androidx.camera.core.UseCase
+import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.*
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import java.io.File
 import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
+import java.text.SimpleDateFormat
+import java.util.*
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import android.graphics.ImageFormat
-import android.media.Image
-import android.graphics.BitmapFactory
-import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.YuvImage
-import android.os.Handler
-import android.os.HandlerThread
+import android.graphics.BitmapFactory
+import android.graphics.Color
+import android.media.Image
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.TimeUnit
+import android.os.Environment
 
 val yoloClasses = listOf(
     Pair("person", Color.RED),
@@ -159,7 +160,7 @@ sealed class ExecOp {
         }
 
         override fun hashCode(): Int {
-            var result = bufferNum
+            var result = bufferNum.hashCode()
             result = 31 * result + data.contentHashCode()
             return result
         }
@@ -169,25 +170,34 @@ sealed class ExecOp {
 class MainActivity : ComponentActivity() {
     private lateinit var analyzerThread: HandlerThread
     private lateinit var analyzerHandler: Handler
+    private lateinit var previewView: PreviewView
+    private lateinit var cameraExecutor: ExecutorService
+    val h = mutableMapOf<String, ByteArray>()
+    private var execOps: List<ExecOp>? = null
+    private var videoCapture: VideoCapture<Recorder>? = null
+    private var recording: Recording? = null
+    private var isRecording = false
+    private val RECORDING_DURATION_MS = 10000L // 10 seconds
+
     companion object {
         init {
             System.loadLibrary("native-lib")
         }
+        private const val REQUEST_CODE_PERMISSIONS = 10
+        private val REQUIRED_PERMISSIONS = arrayOf(
+            Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO
+        )
     }
 
-    private lateinit var previewView: PreviewView
-    public val h = mutableMapOf<String, ByteArray>()
-    // Add execOps as a member variable to be accessible by ImageAnalyzer
-    private var execOps: List<ExecOp>? = null
-
-    // Camera permission launcher
     private val requestPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted: Boolean ->
-        if (isGranted) {
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        if (permissions.all { it.value }) {
             startCamera()
         } else {
-            Log.w("MainActivity", "Camera permission denied")
+            Log.w("MainActivity", "Required permissions denied")
+            finish()
         }
     }
 
@@ -203,7 +213,8 @@ class MainActivity : ComponentActivity() {
         analyzerThread.start()
         analyzerHandler = Handler(analyzerThread.looper)
 
-        // First set up the camera preview view (but don't start camera yet)
+        cameraExecutor = Executors.newSingleThreadExecutor()
+
         previewView = PreviewView(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -213,7 +224,6 @@ class MainActivity : ComponentActivity() {
         }
         setContentView(previewView)
 
-        // Load shader and process batch data in background
         Thread {
             try {
                 val shaderStream: InputStream = assets.open("shader.comp.spv")
@@ -224,34 +234,27 @@ class MainActivity : ComponentActivity() {
                 val batchData = batchDataStream.readBytes()
                 batchDataStream.close()
 
-                // Process the batch data and prepare execOps for both benchmark and camera
                 val parsedHashDataMap = parseHashDataMap(batchData)
                 val operations = extractOperationsFromHashData(parsedHashDataMap)
                 val (initOps, lastCopyIn) = separateOperations(operations)
                 executeInitializationOps(this@MainActivity, initOps, parsedHashDataMap)
-                // Store execOps here so it can be used by YourImageAnalyzer
                 this.execOps = prepareExecutionOps(operations, h, parsedHashDataMap, lastCopyIn)
 
-                // Execute operations in benchmark loop using the prepared execOps
-                // Pass null for rgbData as we are not using camera data in this loop
-                for (i in 1..100) {
+                for (i in 1..10) {
                     val startTime = System.nanoTime()
-                    executeOps(this@MainActivity, execOps!!) // Use '!!' because we know it's initialized here
+                    executeOps(this@MainActivity, execOps!!)
                     val endTime = System.nanoTime()
                     val durationMs = (endTime - startTime) / 1_000_000.0
                     Log.d("MainActivity", "Run #$i took %.3f ms".format(durationMs))
                 }
 
-                // After benchmarks complete, request camera permission
                 runOnUiThread {
-                    if (ContextCompat.checkSelfPermission(
-                            this@MainActivity,
-                            Manifest.permission.CAMERA
-                        ) == PackageManager.PERMISSION_GRANTED
-                    ) {
+                    if (REQUIRED_PERMISSIONS.all {
+                            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+                        }) {
                         startCamera()
                     } else {
-                        requestPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        requestPermissionLauncher.launch(REQUIRED_PERMISSIONS)
                     }
                 }
             } catch (e: Exception) {
@@ -275,13 +278,16 @@ class MainActivity : ComponentActivity() {
                         it.setSurfaceProvider(previewView.surfaceProvider)
                     }
 
-                // Add image analysis configuration
+                val recorder = Recorder.Builder()
+                    .setQualitySelector(QualitySelector.from(Quality.HD))
+                    .build()
+                videoCapture = VideoCapture.withOutput(recorder)
+
                 val imageAnalysis = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .build()
                     .also {
-                        // Pass 'this@MainActivity' to YourImageAnalyzer so it can access 'execOps' and 'executeOps'
-                        it.setAnalyzer(ContextCompat.getMainExecutor(this), YourImageAnalyzer(this@MainActivity))
+                        it.setAnalyzer(cameraExecutor, YourImageAnalyzer(this@MainActivity))
                     }
 
                 val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
@@ -291,23 +297,94 @@ class MainActivity : ComponentActivity() {
                     this as LifecycleOwner,
                     cameraSelector,
                     preview,
-                    imageAnalysis  // Add image analysis to the bind list
+                    videoCapture,
+                    imageAnalysis
                 )
 
                 Log.d("MainActivity", "Camera started successfully")
+                startRecording()
             } catch (e: Exception) {
                 Log.e("MainActivity", "Camera start failed: ${e.message}")
             }
         }, ContextCompat.getMainExecutor(this))
     }
 
-    // Helper to get execOps, ensuring it's not null before use
+    private fun startRecording() {
+        if (isRecording) return
+
+        isRecording = true
+
+        val outputDir = getExternalFilesDir(Environment.DIRECTORY_MOVIES)
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val outputFile = File(outputDir, "video_$timestamp.mp4")
+
+        val mediaStoreOutput = FileOutputOptions.Builder(outputFile).build()
+
+        recording = videoCapture?.output
+            ?.prepareRecording(this, mediaStoreOutput)
+            ?.withAudioEnabled()
+            ?.start(ContextCompat.getMainExecutor(this)) { recordEvent ->
+                when (recordEvent) {
+                    is VideoRecordEvent.Start -> {
+                        Log.d("MainActivity", "Recording started")
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            stopAndRestartRecording()
+                        }, RECORDING_DURATION_MS)
+                    }
+                    is VideoRecordEvent.Finalize -> {
+                        if (!recordEvent.hasError()) {
+                            Log.d("MainActivity", "Recording saved: ${outputFile.absolutePath}")
+                        } else {
+                            Log.e("MainActivity", "Recording error: ${recordEvent.error}")
+                        }
+                        isRecording = false
+                        if (!recordEvent.hasError()) {
+                            startRecording()
+                        }
+                    }
+                }
+            }
+    }
+
+    private fun stopAndRestartRecording() {
+        recording?.stop()
+        recording = null
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        recording?.stop()
+        analyzerThread.quitSafely()
+        cameraExecutor.shutdown()
+        try {
+            cameraExecutor.awaitTermination(5, TimeUnit.SECONDS)
+        } catch (e: InterruptedException) {
+            Log.e("MainActivity", "Executor shutdown interrupted: ${e.message}")
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_CODE_PERMISSIONS && REQUIRED_PERMISSIONS.all {
+                ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+            }) {
+            startCamera()
+        } else {
+            Log.w("MainActivity", "Permissions not granted")
+            finish()
+        }
+    }
+
     fun getExecOperations(): List<ExecOp>? {
         return execOps
     }
 }
 
-// Renamed and modified processBatchData to only prepare operations, not run the loop
 fun prepareBatchOperations(activity: MainActivity, body: ByteArray): List<ExecOp> {
     val hashDataMap = parseHashDataMap(body)
     val operations = extractOperationsFromHashData(hashDataMap)
@@ -315,7 +392,6 @@ fun prepareBatchOperations(activity: MainActivity, body: ByteArray): List<ExecOp
     executeInitializationOps(activity, initOps, hashDataMap)
     return prepareExecutionOps(operations, activity.h, hashDataMap, lastCopyIn)
 }
-
 
 fun parseHashDataMap(body: ByteArray): MutableMap<String, ByteArray> {
     val hashDataMap = mutableMapOf<String, ByteArray>()
@@ -395,9 +471,8 @@ fun prepareExecutionOps(
     return operations.filter {
         it.trim().startsWith("ProgramExec(") ||
                 it.trim().startsWith("CopyOut(") ||
-                (lastCopyIn != null && it.trim() == lastCopyIn.trim()) // Include the last CopyIn for execOps
+                (lastCopyIn != null && it.trim() == lastCopyIn.trim())
     }.mapNotNull { op ->
-        // Handle CopyIn separately for the last one
         if (op.trim() == lastCopyIn?.trim()) {
             parseCopyInOp(op, hashDataMap)
         } else {
@@ -406,7 +481,6 @@ fun prepareExecutionOps(
     }
 }
 
-// Modify executeOps to accept optional rgbData
 fun executeOps(activity: MainActivity, ops: List<ExecOp>, rgbData: ByteArray? = null) {
     ops.forEach { op ->
         when (op) {
@@ -431,15 +505,12 @@ fun executeOps(activity: MainActivity, ops: List<ExecOp>, rgbData: ByteArray? = 
 
                 for (i in 0 until floatArray.size / 6) {
                     val row = floatArray.sliceArray(i * 6 until (i + 1) * 6)
-
                     val classIndex = row[5].toInt()
                     val className = yoloClasses.getOrNull(classIndex)?.first ?: "Unknown"
 
                     if (row[4] >= 0.25f) {
                         countMap[className] = countMap.getOrDefault(className, 0) + 1
                     }
-
-                    //Log.d("MainActivity", "[${row.take(5).joinToString(", ") { "%.4f".format(it) }}, $className]")
                 }
 
                 Log.d("MainActivity", "Class counts:")
@@ -449,7 +520,6 @@ fun executeOps(activity: MainActivity, ops: List<ExecOp>, rgbData: ByteArray? = 
             }
             is ExecOp.CopyInOp -> {
                 Log.d("MainActivity", "COPYING INTO BUFFER: ${op.bufferNum}")
-                // Use rgbData if provided, otherwise fall back to op.data
                 activity.uploadBuffer(op.bufferNum, rgbData ?: op.data)
                 Log.d("MainActivity", "  op.data length: ${op.data.size} bytes")
             }
@@ -465,7 +535,6 @@ fun separateOperations(operations: List<String>): Pair<List<String>, String?> {
         when {
             op.trim().startsWith("BufferAlloc(") -> true
             op.trim().startsWith("ProgramAlloc(") -> true
-            // Only include CopyIn ops in initOps if they are NOT the lastCopyIn
             op.trim().startsWith("CopyIn(") -> op != lastCopyIn
             else -> false
         }
@@ -501,7 +570,7 @@ fun parseExecOp(op: String, programMap: Map<String, ByteArray>): ExecOp? {
             val params = parseOperationParams(match.groupValues[2])
             ExecOp.CopyOutOp(params["buffer_num"] ?: "0")
         }
-        else -> null // For cases like CopyIn that are handled separately
+        else -> null
     }
 }
 
@@ -516,28 +585,22 @@ fun parseCopyInOp(op: String, hashDataMap: Map<String, ByteArray>): ExecOp.CopyI
     }
 }
 
-// This function is no longer needed in its original form as operations are separated
-// fun executeOperations(activity: MainActivity, operations: List<String>, hashDataMap: Map<String, ByteArray>) { ... }
-
 fun parseOperationParams(paramString: String): Map<String, String> {
     val params = mutableMapOf<String, String>()
-    // Updated regex to correctly handle nested parentheses for global_size, etc.
     val pattern = """(\w+)=((?:\([^)]*\)|'[^']*'|"[^"]*"|[^,)]+)(?:\s*,\s*\([^)]*\))*)"""
     val regex = Regex(pattern)
 
     regex.findAll(paramString).forEach { match ->
         val key = match.groupValues[1]
-        var value = match.groupValues[2].trim() // Trim to remove leading/trailing whitespace
+        var value = match.groupValues[2].trim()
 
-        // Clean up quotes or parentheses only if they fully enclose the value
         value = when {
             value.startsWith("('") && value.endsWith("')") ->
-                value.substring(2, value.length - 2) // Remove (' and ')
+                value.substring(2, value.length - 2)
             value.startsWith("'") && value.endsWith("'") ->
                 value.removeSurrounding("'")
             value.startsWith("\"") && value.endsWith("\"") ->
                 value.removeSurrounding("\"")
-            // Handle cases like "global_size=(1,1,1)" where value is "(1,1,1)"
             value.startsWith("(") && value.endsWith(")") ->
                 value.removeSurrounding("(", ")")
             else -> value
@@ -548,7 +611,6 @@ fun parseOperationParams(paramString: String): Map<String, String> {
 }
 
 private class YourImageAnalyzer(private val activity: MainActivity) : ImageAnalysis.Analyzer {
-
     private var frameCount = 0
     private var lastFpsTimestampNs = System.nanoTime()
 
@@ -577,7 +639,6 @@ private class YourImageAnalyzer(private val activity: MainActivity) : ImageAnaly
                 Log.d("ImageAnalysis", "Frame processing took %.3f ms".format(durationMs))
             }
 
-            // FPS tracking with decimal precision
             frameCount++
             val nowNs = System.nanoTime()
             val elapsedSec = (nowNs - lastFpsTimestampNs) / 1_000_000_000.0
@@ -594,38 +655,27 @@ private class YourImageAnalyzer(private val activity: MainActivity) : ImageAnaly
     }
 }
 
-// Add this extension function outside the MainActivity class
 private fun Image.toRGBByteArray(): ByteArray {
     val yBuffer = planes[0].buffer
     val uBuffer = planes[1].buffer
     val vBuffer = planes[2].buffer
-
     val ySize = yBuffer.remaining()
     val uSize = uBuffer.remaining()
     val vSize = vBuffer.remaining()
-
     val nv21 = ByteArray(ySize + uSize + vSize)
-
     yBuffer.get(nv21, 0, ySize)
-    vBuffer.get(nv21, ySize, vSize) // VU order for NV21
+    vBuffer.get(nv21, ySize, vSize)
     uBuffer.get(nv21, ySize + vSize, uSize)
-
     val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
-
     val out = ByteArrayOutputStream()
     yuvImage.compressToJpeg(Rect(0, 0, width, height), 100, out)
     val jpegBytes = out.toByteArray()
-
-    // Decode to RGB Bitmap
     val bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
-
     val rgbBuffer = ByteBuffer.allocate(bitmap.byteCount)
     bitmap.copyPixelsToBuffer(rgbBuffer)
-
     val signedRgbBytes = rgbBuffer.array()
     val unsignedRgbBytes = ByteArray(signedRgbBytes.size) { i ->
         (signedRgbBytes[i].toInt() and 0xFF).toByte()
     }
-
     return unsignedRgbBytes
 }
