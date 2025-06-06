@@ -27,6 +27,8 @@ import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.YuvImage
+import android.os.Handler
+import android.os.HandlerThread
 import java.io.ByteArrayOutputStream
 
 val yoloClasses = listOf(
@@ -165,6 +167,8 @@ sealed class ExecOp {
 }
 
 class MainActivity : ComponentActivity() {
+    private lateinit var analyzerThread: HandlerThread
+    private lateinit var analyzerHandler: Handler
     companion object {
         init {
             System.loadLibrary("native-lib")
@@ -194,6 +198,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        analyzerThread = HandlerThread("AnalyzerThread")
+        analyzerThread.start()
+        analyzerHandler = Handler(analyzerThread.looper)
 
         // First set up the camera preview view (but don't start camera yet)
         previewView = PreviewView(this).apply {
@@ -226,7 +234,7 @@ class MainActivity : ComponentActivity() {
 
                 // Execute operations in benchmark loop using the prepared execOps
                 // Pass null for rgbData as we are not using camera data in this loop
-                for (i in 1..1000) {
+                for (i in 1..100) {
                     val startTime = System.nanoTime()
                     executeOps(this@MainActivity, execOps!!) // Use '!!' because we know it's initialized here
                     val endTime = System.nanoTime()
@@ -251,6 +259,8 @@ class MainActivity : ComponentActivity() {
             }
         }.start()
     }
+
+    fun getAnalyzerHandler(): Handler = analyzerHandler
 
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
@@ -539,33 +549,33 @@ fun parseOperationParams(paramString: String): Map<String, String> {
 
 
 private class YourImageAnalyzer(private val activity: MainActivity) : ImageAnalysis.Analyzer {
-    override fun analyze(image: ImageProxy) {
-        // This is called for each frame
-        // Log.d("CameraFrame", "New frame captured! ${image.width}x${image.height}") // This can be very chatty
 
-        //hack because vulkan doesn't have int8? they're converted to int32s
-        val rgbByteArray = image.image?.toRGBByteArray()
-        val input = rgbByteArray?.let { ByteArray(it.size * 4) }
-        if (rgbByteArray != null && input != null) {
+    override fun analyze(image: ImageProxy) {
+        val mediaImage = image.image ?: run {
+            image.close()
+            return
+        }
+        activity.getAnalyzerHandler().post {
+            val rgbByteArray = mediaImage.toRGBByteArray()
+            val input = ByteArray(rgbByteArray.size * 4)
+
             for (i in 0 until rgbByteArray.size / 4) {
                 input[i * 3 * 4 + 0] = rgbByteArray[i * 4 + 0]
                 input[i * 3 * 4 + 4] = rgbByteArray[i * 4 + 1]
                 input[i * 3 * 4 + 8] = rgbByteArray[i * 4 + 2]
             }
-        }
-        // Get the prepared execOps from MainActivity
-        val execOps = activity.getExecOperations()
 
-        if (execOps != null) {
-            val startTime = System.nanoTime()
-            executeOps(activity, execOps, input) // Pass the rgb data here
-            val endTime = System.nanoTime()
-            val durationMs = (endTime - startTime) / 1_000_000.0
-            Log.d("ImageAnalysis", "Frame processing took %.3f ms".format(durationMs))
-        }
+            val execOps = activity.getExecOperations()
+            if (execOps != null) {
+                val startTime = System.nanoTime()
+                executeOps(activity, execOps, input)
+                val endTime = System.nanoTime()
+                val durationMs = (endTime - startTime) / 1_000_000.0
+                Log.d("ImageAnalysis", "Frame processing took %.3f ms".format(durationMs))
+            }
 
-        // Make sure to close the image when done
-        image.close()
+            image.close()
+        }
     }
 }
 
