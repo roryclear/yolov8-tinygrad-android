@@ -547,14 +547,17 @@ fun parseOperationParams(paramString: String): Map<String, String> {
     return params
 }
 
-
 private class YourImageAnalyzer(private val activity: MainActivity) : ImageAnalysis.Analyzer {
+
+    private var frameCount = 0
+    private var lastFpsTimestampNs = System.nanoTime()
 
     override fun analyze(image: ImageProxy) {
         val mediaImage = image.image ?: run {
             image.close()
             return
         }
+
         activity.getAnalyzerHandler().post {
             val rgbByteArray = mediaImage.toRGBByteArray()
             val input = ByteArray(rgbByteArray.size * 4)
@@ -572,6 +575,18 @@ private class YourImageAnalyzer(private val activity: MainActivity) : ImageAnaly
                 val endTime = System.nanoTime()
                 val durationMs = (endTime - startTime) / 1_000_000.0
                 Log.d("ImageAnalysis", "Frame processing took %.3f ms".format(durationMs))
+            }
+
+            // FPS tracking with decimal precision
+            frameCount++
+            val nowNs = System.nanoTime()
+            val elapsedSec = (nowNs - lastFpsTimestampNs) / 1_000_000_000.0
+
+            if (elapsedSec >= 1.0) {
+                val fps = frameCount / elapsedSec
+                Log.d("ImageAnalysis", "FPS: %.2f".format(fps))
+                frameCount = 0
+                lastFpsTimestampNs = nowNs
             }
 
             image.close()
